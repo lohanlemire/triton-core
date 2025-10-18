@@ -1,21 +1,5 @@
-# Dockerfile for building the Triton `core` shared library (libtritonserver)
-# This Dockerfile is placed in the `core/` directory and defaults to enabling
-# every available option including GPU support. It installs a modern CMake,
-# ninja, Python build tooling (including the 'build' package) and performs
-# a full build of the `core` subproject producing an installed tree under
-# `/workspace/build/triton-core/install` in the builder image, which is then
-# copied into the final runtime image at `/opt/tritonserver`.
-#
-# Usage examples (from repo root):
-#  CPU-only (but this file defaults to GPU enabled):
-#    docker build -f core/Dockerfile.build-core -t triton-core-build .
-#
-#  Explicit GPU base image (recommended when building GPU-enabled):
-#    docker build \
-#      --build-arg BASE_IMAGE=nvidia/cuda:12.1.1-devel-ubuntu22.04 \
-#      -f core/Dockerfile.build-core -t triton-core-build-gpu .
-
-ARG BASE_IMAGE=nvidia/cuda:12.1.1-devel-ubuntu22.04
+ARG BASE_IMAGE=nvidia/cuda:13.0.1-devel-ubuntu24.04
+ARG DCGM_VERSION=4.4.0-1
 FROM ${BASE_IMAGE} AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -53,11 +37,8 @@ RUN apt-get update \
     curl \
     unzip \
     pkg-config \
-   python3 \
-   python3-distutils \
-   python3-dev \
-   python3.10-dev \
-   libpython3.10-dev \
+     python3 \
+     python3-dev \
     python3-venv \
     python3-pip \
     ninja-build \
@@ -81,7 +62,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # Install modern CMake from Kitware APT
-RUN apt-get update && apt-get install -y --no-install-recommends apt-transport-https \
+RUN apt-get update \
  && wget -O - "https://apt.kitware.com/keys/kitware-archive-latest.asc" | apt-key add - \
  && DISTRO="$(lsb_release -cs)" \
  && echo "deb https://apt.kitware.com/ubuntu/ ${DISTRO} main" > /etc/apt/sources.list.d/kitware.list \
@@ -99,6 +80,23 @@ RUN wget -O /tmp/boost.tar.gz https://archives.boost.org//release/1.80.0/source/
  && (cd /tmp && tar xzf boost.tar.gz) \
  && mv /tmp/boost_1_80_0/boost /usr/include/boost
 
+# Set DCGM version
+ENV DCGM_VERSION=4.4.0-1
+
+# Install DCGM libraries (aligned with build.py logic; ubuntu24.04 x86_64)
+RUN curl -o /tmp/cuda-keyring.deb \
+    https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
+    && apt install /tmp/cuda-keyring.deb \
+    && rm /tmp/cuda-keyring.deb \
+    && apt update \
+    && apt install --yes --no-install-recommends \
+        datacenter-gpu-manager-4-core=1:${DCGM_VERSION} \
+        datacenter-gpu-manager-4-dev=1:${DCGM_VERSION} \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set DCGM_DIR to help CMake find the DCGM package
+ENV DCGM_DIR=/usr/lib/x86_64-linux-gnu
+
 # Create workspace and copy only the core source tree to avoid copying any
 # existing build directories from the build context.
 WORKDIR /workspace
@@ -109,10 +107,18 @@ COPY . /workspace/core
 ENV CMAKE_POLICY_VERSION_MINIMUM=3.5
 
 # Create a persistent build directory for caching CMake files
+# Note: we use Docker BuildKit cache mounts for best performance. When
+# building locally enable BuildKit (e.g. export DOCKER_BUILDKIT=1) or use
+# "docker buildx build". BuildKit will persist the cache between builds
+# even when the image changes, which speeds up CMake configure times.
 RUN mkdir -p /workspace/build-cache
 
 # Configure core only (ExternalProject will handle third-party fetch/build)
-RUN cmake -S core -B /workspace/build-cache -G Ninja \
+# Use BuildKit cache mounts to persist CMake and Ninja files between builds.
+# These RUN lines will be no-ops if BuildKit is not enabled, so we keep a
+# fallback to the plain commands above for compatibility.
+RUN --mount=type=cache,id=cmake-cache,target=/workspace/build-cache \
+    cmake -S core -B /workspace/build-cache -G Ninja \
     -DCMAKE_BUILD_TYPE=${TRITON_BUILD_TYPE} \
     -DCMAKE_INSTALL_PREFIX=${TRITON_INSTALL_PREFIX} \
     -DTRITON_CORE_HEADERS_ONLY=${TRITON_CORE_HEADERS_ONLY} \
@@ -136,30 +142,26 @@ RUN cmake -S core -B /workspace/build-cache -G Ninja \
     -DCMAKE_C_FLAGS="-fno-omit-frame-pointer" \
     ${BUILD_CMAKE_FLAGS}
 
-# Build and install using the persistent build directory
-RUN cmake --build /workspace/build-cache --config ${TRITON_BUILD_TYPE} -j$(nproc)
-RUN cmake --install /workspace/build-cache --config ${TRITON_BUILD_TYPE}
+# Build and install using the persistent build directory and cache mount
+RUN --mount=type=cache,id=cmake-cache,target=/workspace/build-cache \
+    cmake --build /workspace/build-cache --config ${TRITON_BUILD_TYPE} -j$(nproc)
 
-# Declare the build-cache directory as a volume to persist CMake cache
+RUN --mount=type=cache,id=cmake-cache,target=/workspace/build-cache \
+    cmake --install /workspace/build-cache --config ${TRITON_BUILD_TYPE}
+
+# Also declare the build-cache as a VOLUME for non-BuildKit users who prefer
+# to bind-mount a host directory at `/workspace/build-cache` during iterative
+# development (optional). Keeping the VOLUME doesn't hurt when BuildKit is
+# used, and provides a fallback persistence mechanism.
 VOLUME /workspace/build-cache
 
 # Final runtime image: copy installed artifacts
-FROM ubuntu:22.04 AS runtime
+FROM ${BASE_IMAGE} AS runtime
 LABEL maintainer="triton-core-builder"
-
-# runtime deps for tritonserver; add common libs
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    libssl-dev \
-    libcurl4 \
-    zlib1g \
-    libstdc++6 \
-    libgcc-s1 \
- && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /workspace/build/triton-core/install /opt/tritonserver
 
-ENV LD_LIBRARY_PATH=/opt/tritonserver/lib:${LD_LIBRARY_PATH:-}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/targets/x86_64-linux/lib:/opt/tritonserver/lib:${LD_LIBRARY_PATH:-}
 ENV PATH=/opt/tritonserver/bin:$PATH
 
 WORKDIR /opt/tritonserver
