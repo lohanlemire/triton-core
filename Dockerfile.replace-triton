@@ -1,0 +1,48 @@
+# Multi-stage Dockerfile that replaces the Triton Server shared library
+# in an existing Triton server image with the newly-built core shared
+# library produced by the builder image (created with
+# `core/Dockerfile.build-core`).
+#
+# Usage (example):
+#  1) Build the builder image (if not already built):
+#       docker build -f core/Dockerfile.build-core -t triton-core-build .
+#
+#  2) Build the replacement image, choosing a base Triton image:
+#       docker build \
+#         --build-arg BUILDER_IMAGE=triton-core-build \
+#         --build-arg TRITON_BASE_IMAGE=nvcr.io/nvidia/tritonserver:23.10-py3 \
+#         -f core/Dockerfile.replace-triton -t tritonserver-custom:23.10 .
+#
+# Notes:
+# - The builder image must contain the built install tree under
+#   /opt/tritonserver (this is what `core/Dockerfile.build-core` produces in
+#   its final stage). The replacement copies the contents of
+#   /opt/tritonserver/lib/ from the builder into the chosen base image,
+#   overwriting existing shared libraries. This replaces `libtritonserver.so`.
+# - You can also copy additional files from the builder if needed, but be
+#   careful to keep compatibility with the base image (same ABI, glibc, CUDA
+#   toolkits, etc.).
+
+ARG BUILDER_IMAGE=triton-core-build
+ARG TRITON_BASE_IMAGE=nvcr.io/nvidia/tritonserver:23.10-py3
+
+# Use the builder image as a source stage. This expects the image to have
+# an installed tree at /opt/tritonserver (as created by the build-core Dockerfile).
+FROM ${BUILDER_IMAGE} as builder
+
+# Final image: start from an official Triton Server image (or any image
+# containing a Triton installation at /opt/tritonserver). We will copy the
+# built libraries from the builder stage into this image to replace them.
+FROM ${TRITON_BASE_IMAGE} as triton_final
+
+LABEL maintainer="triton-core-replacer"
+# Copy the built libraries from the builder into the runtime image.
+# This will overwrite existing libraries in /opt/tritonserver/lib.
+COPY --from=builder /opt/tritonserver/lib/ /opt/tritonserver/lib/
+
+# If the builder produced a tritonserver binary in /opt/tritonserver/bin and
+# you want to replace it as well (not usually necessary), uncomment below.
+# COPY --from=builder /opt/tritonserver/bin/tritonserver /opt/tritonserver/bin/tritonserver
+
+# Ensure library permissions are correct
+RUN chmod -R a+rX /opt/tritonserver/lib || true

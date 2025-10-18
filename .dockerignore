@@ -1,0 +1,27 @@
+# Ignore local build directories and other large or sensitive files from the Docker build context
+build
+**/build
+core/build
+triton-server/build
+triton-python_backend/build
+common/build
+*/build
+.git
+.git/*
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.swo
+*.bak
+*.log
+*.tmp
+
+# Node, Python caches, and other generated files
+node_modules
+dist
+.tox
+*.egg-info

@@ -1,0 +1,160 @@
+# Dockerfile for building the Triton `core` shared library (libtritonserver)
+# This Dockerfile is placed in the `core/` directory and defaults to enabling
+# every available option including GPU support. It installs a modern CMake,
+# ninja, Python build tooling (including the 'build' package) and performs
+# a full build of the `core` subproject producing an installed tree under
+# `/workspace/build/triton-core/install` in the builder image, which is then
+# copied into the final runtime image at `/opt/tritonserver`.
+#
+# Usage examples (from repo root):
+#  CPU-only (but this file defaults to GPU enabled):
+#    docker build -f core/Dockerfile.build-core -t triton-core-build .
+#
+#  Explicit GPU base image (recommended when building GPU-enabled):
+#    docker build \
+#      --build-arg BASE_IMAGE=nvidia/cuda:12.1.1-devel-ubuntu22.04 \
+#      -f core/Dockerfile.build-core -t triton-core-build-gpu .
+
+ARG BASE_IMAGE=nvidia/cuda:12.1.1-devel-ubuntu22.04
+FROM ${BASE_IMAGE} AS builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG TRITON_BUILD_TYPE=RelWithDebInfo
+ARG TRITON_INSTALL_PREFIX=/workspace/build/triton-core/install
+ARG TRITON_CORE_HEADERS_ONLY=OFF
+# Default: enable all optional features
+ARG TRITON_ENABLE_GPU=ON
+ARG TRITON_ENABLE_NVTX=ON
+ARG TRITON_ENABLE_TRACING=ON
+ARG TRITON_ENABLE_LOGGING=ON
+ARG TRITON_ENABLE_STATS=ON
+ARG TRITON_ENABLE_METRICS=ON
+ARG TRITON_ENABLE_METRICS_GPU=ON
+ARG TRITON_ENABLE_METRICS_CPU=ON
+ARG TRITON_ENABLE_GCS=ON
+ARG TRITON_ENABLE_S3=ON
+ARG TRITON_ENABLE_AZURE_STORAGE=ON
+ARG TRITON_ENABLE_ENSEMBLE=ON
+ARG TRITON_ENABLE_MALI_GPU=ON
+ARG TRITON_MIN_CXX_STANDARD=17
+ARG TRITON_THIRD_PARTY_INSTALL_PREFIX=/workspace/third-party
+ARG BUILD_CMAKE_FLAGS=""
+
+# Install base packages and Kitware apt for newer CMake
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    gnupg \
+    wget \
+    lsb-release \
+    software-properties-common \
+    build-essential \
+    git \
+    curl \
+    unzip \
+    pkg-config \
+   python3 \
+   python3-distutils \
+   python3-dev \
+   python3.10-dev \
+   libpython3.10-dev \
+    python3-venv \
+    python3-pip \
+    ninja-build \
+    zlib1g-dev \
+    libssl-dev \
+    libcurl4-openssl-dev \
+    autoconf \
+    automake \
+    libtool \
+    libre2-dev \
+    libb64-dev \
+    libgoogle-perftools-dev \
+    libjemalloc-dev \
+    libnuma-dev \
+    rapidjson-dev \
+    scons \
+    libarchive-dev \
+    libxml2-dev \
+    python3-wheel \
+    python3-setuptools \
+ && rm -rf /var/lib/apt/lists/*
+
+# Install modern CMake from Kitware APT
+RUN apt-get update && apt-get install -y --no-install-recommends apt-transport-https \
+ && wget -O - "https://apt.kitware.com/keys/kitware-archive-latest.asc" | apt-key add - \
+ && DISTRO="$(lsb_release -cs)" \
+ && echo "deb https://apt.kitware.com/ubuntu/ ${DISTRO} main" > /etc/apt/sources.list.d/kitware.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends cmake \
+ && rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip and install Python build tools required by wheel build
+# and ensure pybind11 can find the Python headers
+RUN python3 -m pip install --upgrade pip setuptools wheel build \
+    && python3 -m pip install docker virtualenv patchelf==0.17.2
+
+# install boost headers
+RUN wget -O /tmp/boost.tar.gz https://archives.boost.org//release/1.80.0/source/boost_1_80_0.tar.gz \
+ && (cd /tmp && tar xzf boost.tar.gz) \
+ && mv /tmp/boost_1_80_0/boost /usr/include/boost
+
+# Create workspace and copy only the core source tree to avoid copying any
+# existing build directories from the build context.
+WORKDIR /workspace
+COPY . /workspace/core
+
+# Ensure consistent CMake policy for third-party subprojects that may
+# request older CMake versions. This avoids configure-time policy errors.
+ENV CMAKE_POLICY_VERSION_MINIMUM=3.5
+
+# Configure core only (ExternalProject will handle third-party fetch/build)
+RUN mkdir -p /workspace/build/core \
+ && cmake -S core -B build/core -G Ninja \
+    -DCMAKE_BUILD_TYPE=${TRITON_BUILD_TYPE} \
+    -DCMAKE_INSTALL_PREFIX=${TRITON_INSTALL_PREFIX} \
+    -DTRITON_CORE_HEADERS_ONLY=${TRITON_CORE_HEADERS_ONLY} \
+    -DTRITON_ENABLE_GPU=${TRITON_ENABLE_GPU} \
+    -DTRITON_ENABLE_NVTX=${TRITON_ENABLE_NVTX} \
+    -DTRITON_ENABLE_TRACING=${TRITON_ENABLE_TRACING} \
+    -DTRITON_ENABLE_LOGGING=${TRITON_ENABLE_LOGGING} \
+    -DTRITON_ENABLE_STATS=${TRITON_ENABLE_STATS} \
+    -DTRITON_ENABLE_METRICS=${TRITON_ENABLE_METRICS} \
+    -DTRITON_ENABLE_METRICS_GPU=${TRITON_ENABLE_METRICS_GPU} \
+    -DTRITON_ENABLE_METRICS_CPU=${TRITON_ENABLE_METRICS_CPU} \
+    -DTRITON_ENABLE_GCS=${TRITON_ENABLE_GCS} \
+    -DTRITON_ENABLE_S3=${TRITON_ENABLE_S3} \
+    -DTRITON_ENABLE_AZURE_STORAGE=${TRITON_ENABLE_AZURE_STORAGE} \
+    -DTRITON_ENABLE_ENSEMBLE=${TRITON_ENABLE_ENSEMBLE} \
+    -DTRITON_ENABLE_MALI_GPU=${TRITON_ENABLE_MALI_GPU} \
+    -DTRITON_MIN_CXX_STANDARD=${TRITON_MIN_CXX_STANDARD} \
+    -DTRITON_THIRD_PARTY_INSTALL_PREFIX=${TRITON_THIRD_PARTY_INSTALL_PREFIX} \
+    -DCMAKE_POLICY_VERSION_MINIMUM=${CMAKE_POLICY_VERSION_MINIMUM} \
+    ${BUILD_CMAKE_FLAGS}
+
+# Build and install
+RUN cmake --build build/core --config ${TRITON_BUILD_TYPE} -j$(nproc)
+RUN cmake --install build/core --config ${TRITON_BUILD_TYPE}
+
+# Final runtime image: copy installed artifacts
+FROM ubuntu:22.04 AS runtime
+LABEL maintainer="triton-core-builder"
+
+# runtime deps for tritonserver; add common libs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl-dev \
+    libcurl4 \
+    zlib1g \
+    libstdc++6 \
+    libgcc-s1 \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /workspace/build/triton-core/install /opt/tritonserver
+
+ENV LD_LIBRARY_PATH=/opt/tritonserver/lib:${LD_LIBRARY_PATH:-}
+ENV PATH=/opt/tritonserver/bin:$PATH
+
+WORKDIR /opt/tritonserver
+
+CMD ["/bin/bash"]
