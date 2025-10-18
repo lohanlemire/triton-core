@@ -26,75 +26,79 @@ ARG BUILD_CMAKE_FLAGS=""
 
 # Install base packages and Kitware apt for newer CMake
 RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    gnupg \
-    wget \
-    lsb-release \
-    software-properties-common \
-    build-essential \
-    git \
-    curl \
-    unzip \
-    pkg-config \
-     python3 \
-     python3-dev \
-    python3-venv \
-    python3-pip \
-    ninja-build \
-    zlib1g-dev \
-    libssl-dev \
-    libcurl4-openssl-dev \
-    autoconf \
-    automake \
-    libtool \
-    libre2-dev \
-    libb64-dev \
-    libgoogle-perftools-dev \
-    libjemalloc-dev \
-    libnuma-dev \
-    rapidjson-dev \
-    scons \
-    libarchive-dev \
-    libxml2-dev \
-    patchelf \
-    python3-wheel \
-    python3-setuptools \
- && rm -rf /var/lib/apt/lists/*
+  && apt-get install -y --no-install-recommends \
+  ca-certificates \
+  gnupg \
+  wget \
+  lsb-release \
+  software-properties-common \
+  build-essential \
+  git \
+  curl \
+  unzip \
+  pkg-config \
+  python3 \
+  python3-dev \
+  python3-venv \
+  python3-pip \
+  ninja-build \
+  zlib1g-dev \
+  libssl-dev \
+  libcurl4-openssl-dev \
+  autoconf \
+  automake \
+  libtool \
+  libre2-dev \
+  libb64-dev \
+  libgoogle-perftools-dev \
+  libjemalloc-dev \
+  libnuma-dev \
+  rapidjson-dev \
+  scons \
+  libarchive-dev \
+  libxml2-dev \
+  patchelf \
+  python3-wheel \
+  python3-setuptools \
+  && rm -rf /var/lib/apt/lists/*
 
 # Install modern CMake from Kitware APT
 RUN apt-get update \
- && wget -O - "https://apt.kitware.com/keys/kitware-archive-latest.asc" | apt-key add - \
- && DISTRO="$(lsb_release -cs)" \
- && echo "deb https://apt.kitware.com/ubuntu/ ${DISTRO} main" > /etc/apt/sources.list.d/kitware.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends cmake \
- && rm -rf /var/lib/apt/lists/*
+  && wget -O - "https://apt.kitware.com/keys/kitware-archive-latest.asc" | apt-key add - \
+  && DISTRO="$(lsb_release -cs)" \
+  && echo "deb https://apt.kitware.com/ubuntu/ ${DISTRO} main" > /etc/apt/sources.list.d/kitware.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends cmake \
+  && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip and install Python build tools required by wheel build
-# Note: Ubuntu 24.04 uses PEP 668 (externally-managed), so allow system installs
-# Alternatively, create/use a venv if you prefer to avoid --break-system-packages.
-RUN python3 -m pip install --break-system-packages --upgrade pip setuptools wheel build \
-    && python3 -m pip install --break-system-packages docker virtualenv
+# Create an isolated Python virtualenv and install the build tools there.
+# This avoids trying to modify system-managed packages (PEP 668) and keeps
+# build tools contained for reproducible builds.
+RUN python3 -m venv /opt/pybuild \
+ && /opt/pybuild/bin/python -m pip install --upgrade pip setuptools wheel build \
+ && /opt/pybuild/bin/python -m pip install docker virtualenv
+
+# Put the venv bin on PATH for the remaining build steps
+ENV PATH=/opt/pybuild/bin:$PATH
 
 # install boost headers
 RUN wget -O /tmp/boost.tar.gz https://archives.boost.org//release/1.80.0/source/boost_1_80_0.tar.gz \
- && (cd /tmp && tar xzf boost.tar.gz) \
- && mv /tmp/boost_1_80_0/boost /usr/include/boost
+  && (cd /tmp && tar xzf boost.tar.gz) \
+  && mv /tmp/boost_1_80_0/boost /usr/include/boost
 
 # Set DCGM version
 ENV DCGM_VERSION=4.4.0-1
 
 # Install DCGM libraries (aligned with build.py logic; ubuntu24.04 x86_64)
 RUN curl -o /tmp/cuda-keyring.deb \
-    https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
-    && apt install /tmp/cuda-keyring.deb \
-    && rm /tmp/cuda-keyring.deb \
-    && apt update \
-    && apt install --yes --no-install-recommends \
-        datacenter-gpu-manager-4-core=1:${DCGM_VERSION} \
-        datacenter-gpu-manager-4-dev=1:${DCGM_VERSION} \
-    && rm -rf /var/lib/apt/lists/*
+  https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
+  && apt install /tmp/cuda-keyring.deb \
+  && rm /tmp/cuda-keyring.deb \
+  && apt update \
+  && apt install --yes --no-install-recommends \
+  datacenter-gpu-manager-4-core=1:${DCGM_VERSION} \
+  datacenter-gpu-manager-4-dev=1:${DCGM_VERSION} \
+  && rm -rf /var/lib/apt/lists/*
 
 # Set DCGM_DIR to help CMake find the DCGM package
 ENV DCGM_DIR=/usr/lib/x86_64-linux-gnu
@@ -120,36 +124,36 @@ RUN mkdir -p /workspace/build-cache
 # These RUN lines will be no-ops if BuildKit is not enabled, so we keep a
 # fallback to the plain commands above for compatibility.
 RUN --mount=type=cache,id=cmake-cache,target=/workspace/build-cache \
-    cmake -S core -B /workspace/build-cache -G Ninja \
-    -DCMAKE_BUILD_TYPE=${TRITON_BUILD_TYPE} \
-    -DCMAKE_INSTALL_PREFIX=${TRITON_INSTALL_PREFIX} \
-    -DTRITON_CORE_HEADERS_ONLY=${TRITON_CORE_HEADERS_ONLY} \
-    -DTRITON_ENABLE_GPU=${TRITON_ENABLE_GPU} \
-    -DTRITON_ENABLE_NVTX=${TRITON_ENABLE_NVTX} \
-    -DTRITON_ENABLE_TRACING=${TRITON_ENABLE_TRACING} \
-    -DTRITON_ENABLE_LOGGING=${TRITON_ENABLE_LOGGING} \
-    -DTRITON_ENABLE_STATS=${TRITON_ENABLE_STATS} \
-    -DTRITON_ENABLE_METRICS=${TRITON_ENABLE_METRICS} \
-    -DTRITON_ENABLE_METRICS_GPU=${TRITON_ENABLE_METRICS_GPU} \
-    -DTRITON_ENABLE_METRICS_CPU=${TRITON_ENABLE_METRICS_CPU} \
-    -DTRITON_ENABLE_GCS=${TRITON_ENABLE_GCS} \
-    -DTRITON_ENABLE_S3=${TRITON_ENABLE_S3} \
-    -DTRITON_ENABLE_AZURE_STORAGE=${TRITON_ENABLE_AZURE_STORAGE} \
-    -DTRITON_ENABLE_ENSEMBLE=${TRITON_ENABLE_ENSEMBLE} \
-    -DTRITON_ENABLE_MALI_GPU=${TRITON_ENABLE_MALI_GPU} \
-    -DTRITON_MIN_CXX_STANDARD=${TRITON_MIN_CXX_STANDARD} \
-    -DTRITON_THIRD_PARTY_INSTALL_PREFIX=${TRITON_THIRD_PARTY_INSTALL_PREFIX} \
-    -DCMAKE_POLICY_VERSION_MINIMUM=${CMAKE_POLICY_VERSION_MINIMUM} \
-    -DCMAKE_CXX_FLAGS="-fno-omit-frame-pointer" \
-    -DCMAKE_C_FLAGS="-fno-omit-frame-pointer" \
-    ${BUILD_CMAKE_FLAGS}
+  cmake -S core -B /workspace/build-cache -G Ninja \
+  -DCMAKE_BUILD_TYPE=${TRITON_BUILD_TYPE} \
+  -DCMAKE_INSTALL_PREFIX=${TRITON_INSTALL_PREFIX} \
+  -DTRITON_CORE_HEADERS_ONLY=${TRITON_CORE_HEADERS_ONLY} \
+  -DTRITON_ENABLE_GPU=${TRITON_ENABLE_GPU} \
+  -DTRITON_ENABLE_NVTX=${TRITON_ENABLE_NVTX} \
+  -DTRITON_ENABLE_TRACING=${TRITON_ENABLE_TRACING} \
+  -DTRITON_ENABLE_LOGGING=${TRITON_ENABLE_LOGGING} \
+  -DTRITON_ENABLE_STATS=${TRITON_ENABLE_STATS} \
+  -DTRITON_ENABLE_METRICS=${TRITON_ENABLE_METRICS} \
+  -DTRITON_ENABLE_METRICS_GPU=${TRITON_ENABLE_METRICS_GPU} \
+  -DTRITON_ENABLE_METRICS_CPU=${TRITON_ENABLE_METRICS_CPU} \
+  -DTRITON_ENABLE_GCS=${TRITON_ENABLE_GCS} \
+  -DTRITON_ENABLE_S3=${TRITON_ENABLE_S3} \
+  -DTRITON_ENABLE_AZURE_STORAGE=${TRITON_ENABLE_AZURE_STORAGE} \
+  -DTRITON_ENABLE_ENSEMBLE=${TRITON_ENABLE_ENSEMBLE} \
+  -DTRITON_ENABLE_MALI_GPU=${TRITON_ENABLE_MALI_GPU} \
+  -DTRITON_MIN_CXX_STANDARD=${TRITON_MIN_CXX_STANDARD} \
+  -DTRITON_THIRD_PARTY_INSTALL_PREFIX=${TRITON_THIRD_PARTY_INSTALL_PREFIX} \
+  -DCMAKE_POLICY_VERSION_MINIMUM=${CMAKE_POLICY_VERSION_MINIMUM} \
+  -DCMAKE_CXX_FLAGS="-fno-omit-frame-pointer" \
+  -DCMAKE_C_FLAGS="-fno-omit-frame-pointer" \
+  ${BUILD_CMAKE_FLAGS}
 
 # Build and install using the persistent build directory and cache mount
 RUN --mount=type=cache,id=cmake-cache,target=/workspace/build-cache \
-    cmake --build /workspace/build-cache --config ${TRITON_BUILD_TYPE} -j$(nproc)
+  cmake --build /workspace/build-cache --config ${TRITON_BUILD_TYPE} -j$(nproc)
 
 RUN --mount=type=cache,id=cmake-cache,target=/workspace/build-cache \
-    cmake --install /workspace/build-cache --config ${TRITON_BUILD_TYPE}
+  cmake --install /workspace/build-cache --config ${TRITON_BUILD_TYPE}
 
 # Also declare the build-cache as a VOLUME for non-BuildKit users who prefer
 # to bind-mount a host directory at `/workspace/build-cache` during iterative
