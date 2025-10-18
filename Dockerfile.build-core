@@ -57,6 +57,7 @@ RUN apt-get update \
     scons \
     libarchive-dev \
     libxml2-dev \
+    patchelf \
     python3-wheel \
     python3-setuptools \
  && rm -rf /var/lib/apt/lists/*
@@ -71,9 +72,10 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip and install Python build tools required by wheel build
-# and ensure pybind11 can find the Python headers
-RUN python3 -m pip install --upgrade pip setuptools wheel build \
-    && python3 -m pip install docker virtualenv patchelf==0.17.2
+# Note: Ubuntu 24.04 uses PEP 668 (externally-managed), so allow system installs
+# Alternatively, create/use a venv if you prefer to avoid --break-system-packages.
+RUN python3 -m pip install --break-system-packages --upgrade pip setuptools wheel build \
+    && python3 -m pip install --break-system-packages docker virtualenv
 
 # install boost headers
 RUN wget -O /tmp/boost.tar.gz https://archives.boost.org//release/1.80.0/source/boost_1_80_0.tar.gz \
