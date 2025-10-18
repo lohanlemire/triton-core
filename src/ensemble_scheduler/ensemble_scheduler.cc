@@ -924,29 +924,21 @@ EnsembleContext::GetNextSteps(
   std::set<std::pair<size_t, IterationCount>> next_step_idx;
   // Get steps whose tensors used for input are set
   for (const auto& updated_tensor : updated_tensors) {
-    auto step_it = tensor_to_step_->find(updated_tensor.first);
-    if (step_it == tensor_to_step_->end()) {
-      continue;
-    }
-    const auto& step_idx = step_it->second;
+    const auto& step_idx = (*tensor_to_step_)[updated_tensor.first];
     for (const auto& idx : step_idx) {
       bool ready = true;
-      const auto& istep = info_->steps_[idx];
-      for (const auto& input_pair : istep.input_to_tensor_) {
-        auto tensor_data_it = tensor_data_.find(input_pair.second);
-        if (tensor_data_it == tensor_data_.end()) {
+      for (const auto& input_pair : info_->steps_[idx].input_to_tensor_) {
+        auto& tensor = tensor_data_[input_pair.second].tensor_;
+        if (tensor.empty()) {
           ready = false;
           break;
-        }
-        auto& tensor_map = tensor_data_it->second.tensor_;
-        if (tensor_map.empty()) {
-          ready = false;
-          break;
-        }
-        // Check if other inputs have tensor with corresponding iteration count
-        if (tensor_map.find(updated_tensor.second) == tensor_map.end()) {
-          ready = false;
-          break;
+        } else {
+          // Check if other inputs have tensor with corresponding iteration
+          // count
+          if (tensor.find(updated_tensor.second) == tensor.end()) {
+            ready = false;
+            break;
+          }
         }
       }
       if (ready) {
