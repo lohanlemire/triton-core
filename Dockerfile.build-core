@@ -108,9 +108,11 @@ COPY . /workspace/core
 # request older CMake versions. This avoids configure-time policy errors.
 ENV CMAKE_POLICY_VERSION_MINIMUM=3.5
 
+# Create a persistent build directory for caching CMake files
+RUN mkdir -p /workspace/build-cache
+
 # Configure core only (ExternalProject will handle third-party fetch/build)
-RUN mkdir -p /workspace/build/core \
- && cmake -S core -B build/core -G Ninja \
+RUN cmake -S core -B /workspace/build-cache -G Ninja \
     -DCMAKE_BUILD_TYPE=${TRITON_BUILD_TYPE} \
     -DCMAKE_INSTALL_PREFIX=${TRITON_INSTALL_PREFIX} \
     -DTRITON_CORE_HEADERS_ONLY=${TRITON_CORE_HEADERS_ONLY} \
@@ -134,9 +136,12 @@ RUN mkdir -p /workspace/build/core \
     -DCMAKE_C_FLAGS="-fno-omit-frame-pointer" \
     ${BUILD_CMAKE_FLAGS}
 
-# Build and install
-RUN cmake --build build/core --config ${TRITON_BUILD_TYPE} -j$(nproc)
-RUN cmake --install build/core --config ${TRITON_BUILD_TYPE}
+# Build and install using the persistent build directory
+RUN cmake --build /workspace/build-cache --config ${TRITON_BUILD_TYPE} -j$(nproc)
+RUN cmake --install /workspace/build-cache --config ${TRITON_BUILD_TYPE}
+
+# Declare the build-cache directory as a volume to persist CMake cache
+VOLUME /workspace/build-cache
 
 # Final runtime image: copy installed artifacts
 FROM ubuntu:22.04 AS runtime
