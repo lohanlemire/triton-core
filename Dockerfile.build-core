@@ -130,6 +130,8 @@ RUN mkdir -p /workspace/build/core \
     -DTRITON_MIN_CXX_STANDARD=${TRITON_MIN_CXX_STANDARD} \
     -DTRITON_THIRD_PARTY_INSTALL_PREFIX=${TRITON_THIRD_PARTY_INSTALL_PREFIX} \
     -DCMAKE_POLICY_VERSION_MINIMUM=${CMAKE_POLICY_VERSION_MINIMUM} \
+    -DCMAKE_CXX_FLAGS="-fno-omit-frame-pointer" \
+    -DCMAKE_C_FLAGS="-fno-omit-frame-pointer" \
     ${BUILD_CMAKE_FLAGS}
 
 # Build and install
