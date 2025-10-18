@@ -28,12 +28,12 @@ ARG TRITON_BASE_IMAGE=nvcr.io/nvidia/tritonserver:23.10-py3
 
 # Use the builder image as a source stage. This expects the image to have
 # an installed tree at /opt/tritonserver (as created by the build-core Dockerfile).
-FROM ${BUILDER_IMAGE} as builder
+FROM ${BUILDER_IMAGE} AS builder
 
 # Final image: start from an official Triton Server image (or any image
 # containing a Triton installation at /opt/tritonserver). We will copy the
 # built libraries from the builder stage into this image to replace them.
-FROM ${TRITON_BASE_IMAGE} as triton_final
+FROM ${TRITON_BASE_IMAGE} AS triton_final
 
 LABEL maintainer="triton-core-replacer"
 # Copy the built libraries from the builder into the runtime image.

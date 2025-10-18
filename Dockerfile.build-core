@@ -89,15 +89,16 @@ RUN wget -O /tmp/boost.tar.gz https://archives.boost.org//release/1.80.0/source/
 # Set DCGM version
 ENV DCGM_VERSION=4.4.0-1
 
-# Install DCGM libraries (aligned with build.py logic; ubuntu24.04 x86_64)
-RUN curl -o /tmp/cuda-keyring.deb \
-  https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
-  && apt install /tmp/cuda-keyring.deb \
-  && rm /tmp/cuda-keyring.deb \
-  && apt update \
-  && apt install --yes --no-install-recommends \
-  datacenter-gpu-manager-4-core=1:${DCGM_VERSION} \
-  datacenter-gpu-manager-4-dev=1:${DCGM_VERSION} \
+# Try to install DCGM packages. The CUDA base image often already
+# configures NVIDIA repos/keyrings; installing the cuda-keyring package
+# here can conflict with pre-existing entries. First try a direct
+# install; if the specific DCGM version is not available fall back to
+# installing whatever datacenter-gpu-manager packages apt can provide.
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends \
+     datacenter-gpu-manager-4-core=1:${DCGM_VERSION} \
+     datacenter-gpu-manager-4-dev=1:${DCGM_VERSION} || \
+    (apt-get install --yes --no-install-recommends datacenter-gpu-manager-4-core datacenter-gpu-manager-4-dev || true) \
   && rm -rf /var/lib/apt/lists/*
 
 # Set DCGM_DIR to help CMake find the DCGM package
@@ -123,8 +124,7 @@ RUN mkdir -p /workspace/build-cache
 # Use BuildKit cache mounts to persist CMake and Ninja files between builds.
 # These RUN lines will be no-ops if BuildKit is not enabled, so we keep a
 # fallback to the plain commands above for compatibility.
-RUN --mount=type=cache,id=cmake-cache,target=/workspace/build-cache \
-  cmake -S core -B /workspace/build-cache -G Ninja \
+RUN cmake -S core -B /workspace/build-cache -G Ninja \
   -DCMAKE_BUILD_TYPE=${TRITON_BUILD_TYPE} \
   -DCMAKE_INSTALL_PREFIX=${TRITON_INSTALL_PREFIX} \
   -DTRITON_CORE_HEADERS_ONLY=${TRITON_CORE_HEADERS_ONLY} \
@@ -149,11 +149,9 @@ RUN --mount=type=cache,id=cmake-cache,target=/workspace/build-cache \
   ${BUILD_CMAKE_FLAGS}
 
 # Build and install using the persistent build directory and cache mount
-RUN --mount=type=cache,id=cmake-cache,target=/workspace/build-cache \
-  cmake --build /workspace/build-cache --config ${TRITON_BUILD_TYPE} -j$(nproc)
+RUN cmake --build /workspace/build-cache --config ${TRITON_BUILD_TYPE} -j$(nproc)
 
-RUN --mount=type=cache,id=cmake-cache,target=/workspace/build-cache \
-  cmake --install /workspace/build-cache --config ${TRITON_BUILD_TYPE}
+RUN cmake --install /workspace/build-cache --config ${TRITON_BUILD_TYPE}
 
 # Also declare the build-cache as a VOLUME for non-BuildKit users who prefer
 # to bind-mount a host directory at `/workspace/build-cache` during iterative
