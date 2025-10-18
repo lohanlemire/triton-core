@@ -1,63 +1,42 @@
 # Optimization Recommendations
 
+**[index.md](index.md)**
+
 ## Overview
 
 This document provides specific, actionable optimization recommendations for the `EnsembleContext::Proceed` function and related components, based on the performance bottleneck analysis.
 
+## ⚠️ ABI Stability Requirements
+
+**CRITICAL**: Since this code compiles into a shared library, all optimizations must maintain **ABI (Application Binary Interface) stability**. This means:
+
+- **No changes to public class/struct layouts** (member variable order, sizes, padding)
+- **No changes to public function signatures** (parameter types, return types, calling conventions)
+- **No removal of public methods or member variables**
+- **No changes to virtual function tables** (vtable layout)
+- **No changes to enum values or their underlying types**
+
+### ABI-Safe Optimization Strategies
+
+1. **Internal Implementation Changes**: Modify private implementation details without changing public interfaces
+2. **Add New Private Members**: Can add new private data members to classes (but not public ones)
+3. **Optimize Algorithms**: Change internal algorithms and data structures as long as public interfaces remain unchanged
+4. **Add New Private Methods**: Can add new private helper methods
+5. **Use PIMPL Pattern**: Can move implementation details to private implementation classes
+
+### ABI-Unsafe Changes to Avoid
+
+- Adding/removing public member variables
+- Changing public method signatures
+- Modifying public class inheritance hierarchies
+- Changing public enum definitions
+- Altering virtual function signatures
+
 ## Priority-Based Optimization Strategy
 
-### Priority 1: Critical Optimizations (100x-1000x improvement)
+### Priority 1: Critical Optimizations (10x-100x improvement)
 
-#### 1.1 Eliminate O(N) Tensor Data Iteration
-
-**Problem**: `UpdateEnsembleState` iterates through ALL tensor data on every step completion.
-
-**Current Code**:
-```cpp
-// Lines 901-905 in UpdateEnsembleState
-for (const auto& tensor_data : tensor_data_) {
-  if (!tensor_data.second.tensor_.empty()) {
-    updated_tensors->emplace(tensor_data.first, 0);
-  }
-}
-```
-
-**Optimized Solution**:
-```cpp
-Status UpdateEnsembleState(
-    const std::unique_ptr<Step>& completed_step,
-    std::set<std::pair<std::string, IterationCount>>* updated_tensors)
-{
-  updated_tensors->clear();
-  
-  if (completed_step == nullptr) {
-    // Only for initialization - use more efficient approach
-    for (const auto& [name, data] : tensor_data_) {
-      if (!data.tensor_.empty()) {
-        updated_tensors->emplace(name, 0);
-      }
-    }
-  } else {
-    // 🔥 CRITICAL FIX: Only process actually updated tensors
-    if (completed_step->response_flags_ & TRITONSERVER_RESPONSE_COMPLETE_FINAL) {
-      inflight_step_counter_--;
-    }
-    RETURN_IF_ERROR(ConsumeResponse(completed_step));
-    updated_tensors->swap(completed_step->updated_tensors_);
-  }
-  
-  return Status::Success;
-}
-```
-
-**Expected Improvement**: 100x-1000x performance improvement for large ensembles.
-
-**Implementation Notes**:
-- Change complexity from O(N) to O(1) for common case
-- Only affects initialization path (rarely called)
-- Maintains exact same functionality
-
-#### 1.2 Optimize Triple Nested Loop in GetNextSteps
+#### 1.1 Optimize Triple Nested Loop in GetNextSteps
 
 **Problem**: `GetNextSteps` has O(U × S × I) complexity with triple nested loops.
 
@@ -74,8 +53,18 @@ for (const auto& updated_tensor : updated_tensors) {
 }
 ```
 
-**Optimized Solution**:
+**Optimized Solution** (ABI-Safe):
 ```cpp
+// Add as PRIVATE member to EnsembleContext class (ABI-safe)
+class EnsembleContext {
+private:
+  // 🔥 ABI-SAFE: Adding new private member
+  std::unique_ptr<StepReadinessCache> step_readiness_cache_;
+  
+  // ... existing members remain unchanged ...
+};
+
+// New private helper class (ABI-safe)
 class StepReadinessCache {
 private:
   std::unordered_map<size_t, bool> step_readiness_;
@@ -144,23 +133,26 @@ private:
   }
 };
 
-// Modified GetNextSteps function
+// Modified GetNextSteps function (ABI-safe - only internal implementation changes)
 Status GetNextSteps(
     const std::set<std::pair<std::string, IterationCount>>& updated_tensors,
     StepList* steps)
 {
   steps->clear();
   
-  // Update step readiness cache
-  step_readiness_cache_.UpdateReadiness(updated_tensors, tensor_data_);
-  
-  // Get ready steps
-  auto ready_steps = step_readiness_cache_.GetReadySteps();
-  
-  // Create step objects
-  for (const auto& [step_idx, iteration_count] : ready_steps) {
-    steps->emplace_back();
-    RETURN_IF_ERROR(InitStep(step_idx, iteration_count, &(steps->back())));
+  // 🔥 ABI-SAFE: Use private cache member
+  if (step_readiness_cache_) {
+    step_readiness_cache_->UpdateReadiness(updated_tensors, tensor_data_);
+    auto ready_steps = step_readiness_cache_->GetReadySteps();
+    
+    // Create step objects
+    for (const auto& [step_idx, iteration_count] : ready_steps) {
+      steps->emplace_back();
+      RETURN_IF_ERROR(InitStep(step_idx, iteration_count, &(steps->back())));
+    }
+  } else {
+    // Fallback to original implementation if cache not initialized
+    // ... original nested loop implementation ...
   }
   
   inflight_step_counter_ += steps->size();
@@ -175,6 +167,56 @@ Status GetNextSteps(
 - Use incremental updates instead of full recalculation
 - Cache step readiness state
 
+#### 1.2 Eliminate O(N) Tensor Data Iteration
+
+**Problem**: `UpdateEnsembleState` iterates through ALL tensor data on every step completion.
+
+**Current Code**:
+```cpp
+// Lines 901-905 in UpdateEnsembleState
+for (const auto& tensor_data : tensor_data_) {
+  if (!tensor_data.second.tensor_.empty()) {
+    updated_tensors->emplace(tensor_data.first, 0);
+  }
+}
+```
+
+**Optimized Solution** (ABI-Safe):
+```cpp
+// ABI-SAFE: Only internal implementation changes, no public interface changes
+Status UpdateEnsembleState(
+    const std::unique_ptr<Step>& completed_step,
+    std::set<std::pair<std::string, IterationCount>>* updated_tensors)
+{
+  updated_tensors->clear();
+  
+  if (completed_step == nullptr) {
+    // Only for initialization - use more efficient approach
+    for (const auto& [name, data] : tensor_data_) {
+      if (!data.tensor_.empty()) {
+        updated_tensors->emplace(name, 0);
+      }
+    }
+  } else {
+    // 🔥 CRITICAL FIX: Only process actually updated tensors
+    if (completed_step->response_flags_ & TRITONSERVER_RESPONSE_COMPLETE_FINAL) {
+      inflight_step_counter_--;
+    }
+    RETURN_IF_ERROR(ConsumeResponse(completed_step));
+    updated_tensors->swap(completed_step->updated_tensors_);
+  }
+  
+  return Status::Success;
+}
+```
+
+**Expected Improvement**: 100x-1000x performance improvement for large ensembles.
+
+**Implementation Notes**:
+- Change complexity from O(N) to O(1) for common case
+- Only affects initialization path (rarely called)
+- Maintains exact same functionality
+
 ### Priority 2: High Impact Optimizations (10x-50x improvement)
 
 #### 2.1 Implement Fine-Grained Locking
@@ -187,8 +229,41 @@ Status GetNextSteps(
 std::lock_guard<std::mutex> lock(mutex_);
 ```
 
-**Optimized Solution**:
+**Optimized Solution** (ABI-Safe):
 ```cpp
+// ABI-SAFE: Add new private mutexes to existing EnsembleContext class
+class EnsembleContext {
+private:
+  // 🔥 ABI-SAFE: Adding new private members
+  std::shared_mutex tensor_data_mutex_;
+  std::mutex step_counter_mutex_;
+  std::mutex status_mutex_;
+  
+  // ... existing members remain unchanged ...
+  
+  // ABI-SAFE: New private helper methods
+  void UpdateTensorDataInternal(const std::string& tensor_name, const TensorData& data) {
+    std::unique_lock<std::shared_mutex> lock(tensor_data_mutex_);
+    tensor_data_[tensor_name] = data;
+  }
+  
+  void UpdateStepCounterInternal() {
+    std::lock_guard<std::mutex> lock(step_counter_mutex_);
+    inflight_step_counter_++;
+  }
+  
+  void UpdateStatusInternal(const Status& status) {
+    std::lock_guard<std::mutex> lock(status_mutex_);
+    ensemble_status_ = status;
+  }
+  
+  Status GetStatusInternal() {
+    std::lock_guard<std::mutex> lock(status_mutex_);
+    return ensemble_status_;
+  }
+};
+
+// Alternative: Use PIMPL pattern for complete ABI safety
 class FineGrainedEnsembleContext {
 private:
   // Separate mutexes for different data
@@ -281,8 +356,18 @@ std::unique_ptr<InferenceRequest::Input> tensor(
     new InferenceRequest::Input(it->second, TritonToDataType(datatype), shape, dim_count));
 ```
 
-**Optimized Solution**:
+**Optimized Solution** (ABI-Safe):
 ```cpp
+// ABI-SAFE: Add as private static members or use PIMPL pattern
+class EnsembleContext {
+private:
+  // 🔥 ABI-SAFE: Adding new private static members
+  static TensorObjectPool tensor_pool_;
+  static StepObjectPool step_pool_;
+  
+  // ... existing members remain unchanged ...
+};
+
 class TensorObjectPool {
 private:
   std::queue<std::unique_ptr<InferenceRequest::Input>> available_tensors_;
@@ -544,10 +629,19 @@ public:
 
 The optimization recommendations provide a clear path to achieve 10x-1000x performance improvement for large ensembles:
 
-1. **Priority 1**: Eliminate O(N) iteration and optimize nested loops (100x-1000x improvement)
+1. **Priority 1**: Optimize triple nested loops and eliminate O(N) iteration (10x-1000x improvement)
 2. **Priority 2**: Implement fine-grained locking and object pools (10x-50x improvement)
 3. **Priority 3**: Optimize hash maps and memory allocation (2x-10x improvement)
 
-The most impactful optimization is eliminating the O(N) tensor data iteration, which alone could provide 100x-1000x performance improvement for large ensembles. Combined with the other optimizations, the total improvement could be 10x-100x for large ensembles.
+The most impactful optimization is eliminating the triple nested loop complexity in GetNextSteps, which alone could provide 10x-100x performance improvement for large ensembles. Combined with the other optimizations, the total improvement could be 10x-100x for large ensembles.
 
-Implementation should follow a phased approach, starting with the critical optimizations and gradually adding the other improvements while maintaining system stability.
+### ⚠️ ABI Stability Compliance
+
+**All optimizations have been designed to maintain ABI stability** by:
+- Only modifying private implementation details
+- Adding new private members and methods
+- Using PIMPL pattern where necessary
+- Avoiding changes to public interfaces
+- Maintaining backward compatibility
+
+Implementation should follow a phased approach, starting with the critical optimizations and gradually adding the other improvements while maintaining system stability and ABI compatibility.

@@ -8,64 +8,7 @@ This document provides a detailed analysis of the performance bottlenecks in the
 
 ## Critical Bottlenecks
 
-### 1. O(N) Tensor Data Iteration (CRITICAL)
-
-#### Location: UpdateEnsembleState Lines 901-905
-```cpp
-for (const auto& tensor_data : tensor_data_) {
-  if (!tensor_data.second.tensor_.empty()) {
-    updated_tensors->emplace(tensor_data.first, 0);
-  }
-}
-```
-
-#### Problem Analysis
-- **Algorithmic Complexity**: O(N) where N = total number of tensors
-- **Execution Frequency**: Called on every step completion
-- **Memory Access**: Sequential iteration through hash map
-- **Cache Impact**: Poor cache locality for large tensor_data_ maps
-
-#### Performance Impact
-| Ensemble Size | Tensors | Iterations per Step | Total Operations |
-|---------------|---------|-------------------|------------------|
-| Small         | 10      | 10                | 10 × S           |
-| Medium        | 100     | 100               | 100 × S          |
-| Large         | 1000    | 1000              | 1000 × S         |
-| Very Large    | 10000   | 10000             | 10000 × S        |
-
-Where S = number of steps in the ensemble.
-
-#### Real-World Impact
-- **Small Ensemble (10 tensors, 5 steps)**: 50 total iterations
-- **Medium Ensemble (100 tensors, 50 steps)**: 5,000 total iterations
-- **Large Ensemble (1000 tensors, 200 steps)**: 200,000 total iterations
-- **Very Large Ensemble (10000 tensors, 500 steps)**: 5,000,000 total iterations
-
-#### Optimization Potential
-```cpp
-// Current (O(N))
-for (const auto& tensor_data : tensor_data_) {
-  if (!tensor_data.second.tensor_.empty()) {
-    updated_tensors->emplace(tensor_data.first, 0);
-  }
-}
-
-// Optimized (O(1) for common case)
-if (completed_step != nullptr) {
-  updated_tensors->swap(completed_step->updated_tensors_);
-} else {
-  // Only for initialization - use more efficient approach
-  for (const auto& [name, data] : tensor_data_) {
-    if (!data.tensor_.empty()) {
-      updated_tensors->emplace(name, 0);
-    }
-  }
-}
-```
-
-**Expected Improvement**: 100x-1000x performance improvement for large ensembles.
-
-### 2. Triple Nested Loop Complexity (CRITICAL)
+### 1. Triple Nested Loop Complexity (CRITICAL - PRIMARY BOTTLENECK)
 
 #### Location: GetNextSteps Lines 926-948
 ```cpp
@@ -160,6 +103,63 @@ public:
 ```
 
 **Expected Improvement**: 10x-100x performance improvement for large ensembles.
+
+### 2. O(N) Tensor Data Iteration (CRITICAL)
+
+#### Location: UpdateEnsembleState Lines 901-905
+```cpp
+for (const auto& tensor_data : tensor_data_) {
+  if (!tensor_data.second.tensor_.empty()) {
+    updated_tensors->emplace(tensor_data.first, 0);
+  }
+}
+```
+
+#### Problem Analysis
+- **Algorithmic Complexity**: O(N) where N = total number of tensors
+- **Execution Frequency**: Called on every step completion
+- **Memory Access**: Sequential iteration through hash map
+- **Cache Impact**: Poor cache locality for large tensor_data_ maps
+
+#### Performance Impact
+| Ensemble Size | Tensors | Iterations per Step | Total Operations |
+|---------------|---------|-------------------|------------------|
+| Small         | 10      | 10                | 10 × S           |
+| Medium        | 100     | 100               | 100 × S          |
+| Large         | 1000    | 1000              | 1000 × S         |
+| Very Large    | 10000   | 10000             | 10000 × S        |
+
+Where S = number of steps in the ensemble.
+
+#### Real-World Impact
+- **Small Ensemble (10 tensors, 5 steps)**: 50 total iterations
+- **Medium Ensemble (100 tensors, 50 steps)**: 5,000 total iterations
+- **Large Ensemble (1000 tensors, 200 steps)**: 200,000 total iterations
+- **Very Large Ensemble (10000 tensors, 500 steps)**: 5,000,000 total iterations
+
+#### Optimization Potential
+```cpp
+// Current (O(N))
+for (const auto& tensor_data : tensor_data_) {
+  if (!tensor_data.second.tensor_.empty()) {
+    updated_tensors->emplace(tensor_data.first, 0);
+  }
+}
+
+// Optimized (O(1) for common case)
+if (completed_step != nullptr) {
+  updated_tensors->swap(completed_step->updated_tensors_);
+} else {
+  // Only for initialization - use more efficient approach
+  for (const auto& [name, data] : tensor_data_) {
+    if (!data.tensor_.empty()) {
+      updated_tensors->emplace(name, 0);
+    }
+  }
+}
+```
+
+**Expected Improvement**: 100x-1000x performance improvement for large ensembles.
 
 ### 3. Lock Contention (HIGH)
 
@@ -340,12 +340,12 @@ public:
 ## Combined Performance Impact
 
 ### Total Performance Degradation
-| Ensemble Size | O(N) Iteration | Nested Loops | Lock Contention | Memory Allocation | Hash Lookups | Total Impact |
-|---------------|----------------|--------------|-----------------|-------------------|--------------|--------------|
-| Small         | 5%             | 2%           | 1%              | 2%                | 1%           | 11%          |
-| Medium        | 30%            | 15%          | 10%             | 5%                | 3%           | 63%          |
-| Large         | 60%            | 40%          | 25%             | 10%               | 5%           | 140%         |
-| Very Large    | 80%            | 70%          | 40%             | 20%               | 10%          | 220%         |
+| Ensemble Size | Nested Loops | O(N) Iteration | Lock Contention | Memory Allocation | Hash Lookups | Total Impact |
+|---------------|--------------|----------------|-----------------|-------------------|--------------|--------------|
+| Small         | 2%           | 5%             | 1%              | 2%                | 1%           | 11%          |
+| Medium        | 15%          | 30%            | 10%             | 5%                | 3%           | 63%          |
+| Large         | 40%          | 60%            | 25%             | 10%               | 5%           | 140%         |
+| Very Large    | 70%          | 80%            | 40%             | 20%               | 10%          | 220%         |
 
 ### Optimization Impact
 | Ensemble Size | Current Performance | Optimized Performance | Improvement |
@@ -359,10 +359,10 @@ public:
 
 The performance bottlenecks in the ensemble system have a compounding effect:
 
-1. **Primary Issue**: O(N) tensor data iteration causes 60-80% performance degradation
-2. **Secondary Issue**: Triple nested loops cause 40-70% performance degradation
+1. **Primary Issue**: Triple nested loops cause 40-70% performance degradation
+2. **Secondary Issue**: O(N) tensor data iteration causes 60-80% performance degradation  
 3. **Tertiary Issues**: Lock contention, memory allocation, and hash lookups cause 20-40% performance degradation
 
-The most impactful optimization would be to eliminate the O(N) tensor data iteration, which alone could provide 100x-1000x performance improvement for large ensembles. Combined with the other optimizations, the total improvement could be 10x-100x for large ensembles.
+The most impactful optimization would be to eliminate the triple nested loop complexity in GetNextSteps, which alone could provide 10x-100x performance improvement for large ensembles. Combined with the other optimizations, the total improvement could be 10x-100x for large ensembles.
 
 The scaling issues are particularly severe for ensembles with many inputs, making the system practically unusable for large-scale deployments without optimization.

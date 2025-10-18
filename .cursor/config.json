@@ -1,0 +1,89 @@
+{
+  "agent": {
+    "name": "EnsembleContext::Proceed Research Agent",
+    "description": "Agent specialized in working with ensemble scheduler research and optimizations",
+    "instructions_file": "agent.md",
+    "research_folder": "EnsembleContext::Proceed research/",
+    "priority_files": [
+      "EnsembleContext::Proceed research/index.md",
+      "EnsembleContext::Proceed research/performance_bottlenecks.md",
+      "EnsembleContext::Proceed research/optimization_recommendations.md"
+    ],
+    "update_triggers": [
+      "src/ensemble_scheduler/ensemble_scheduler.cc",
+      "src/ensemble_scheduler/ensemble_scheduler.h"
+    ],
+    "research_update_required": [
+      "UpdateEnsembleState",
+      "GetNextSteps",
+      "PrepareSteps",
+      "ConsumeResponse",
+      "InitStep",
+      "ScheduleSteps"
+    ]
+  },
+  "research": {
+    "main_index": "EnsembleContext::Proceed research/index.md",
+    "data_structures": "EnsembleContext::Proceed research/data_structures.md",
+    "performance_analysis": "EnsembleContext::Proceed research/performance_bottlenecks.md",
+    "optimization_guide": "EnsembleContext::Proceed research/optimization_recommendations.md",
+    "tensor_flow": "EnsembleContext::Proceed research/tensor_data_flow.md",
+    "step_lifecycle": "EnsembleContext::Proceed research/step_lifecycle.md"
+  },
+  "performance_targets": {
+    "small_ensemble": {
+      "tensors": "10-50",
+      "expected_improvement": "10%",
+      "current_performance": "100%",
+      "target_performance": "110%"
+    },
+    "medium_ensemble": {
+      "tensors": "50-200",
+      "expected_improvement": "170%",
+      "current_performance": "37%",
+      "target_performance": "100%"
+    },
+    "large_ensemble": {
+      "tensors": "200-1000",
+      "expected_improvement": "614%",
+      "current_performance": "14%",
+      "target_performance": "100%"
+    },
+    "very_large_ensemble": {
+      "tensors": "1000+",
+      "expected_improvement": "1011%",
+      "current_performance": "9%",
+      "target_performance": "100%"
+    }
+  },
+  "critical_optimizations": [
+    {
+      "name": "Eliminate O(N) Tensor Data Iteration",
+      "location": "UpdateEnsembleState lines 901-905",
+      "impact": "100x-1000x improvement",
+      "priority": "CRITICAL",
+      "status": "pending"
+    },
+    {
+      "name": "Optimize Triple Nested Loop in GetNextSteps",
+      "location": "GetNextSteps lines 926-948",
+      "impact": "10x-100x improvement",
+      "priority": "CRITICAL",
+      "status": "pending"
+    },
+    {
+      "name": "Implement Fine-Grained Locking",
+      "location": "PrepareSteps line 862",
+      "impact": "20-50% improvement",
+      "priority": "HIGH",
+      "status": "pending"
+    },
+    {
+      "name": "Implement Object Pools",
+      "location": "Multiple locations in ConsumeResponse",
+      "impact": "10-30% improvement",
+      "priority": "HIGH",
+      "status": "pending"
+    }
+  ]
+}

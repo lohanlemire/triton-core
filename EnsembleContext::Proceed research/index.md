@@ -42,17 +42,17 @@ This research analyzes the `EnsembleContext::Proceed` function and its related c
 ## Critical Findings
 
 ### 🚨 Primary Scaling Issue
-The main bottleneck is in `UpdateEnsembleState` (lines 901-905) which performs **O(N) iteration through ALL tensor data entries** on every step completion, regardless of how many tensors were actually updated.
+The main bottleneck is in `GetNextSteps` (lines 926-948) which has **O(U × S × I) triple nested loop complexity** where U=updated tensors, S=steps per tensor, I=inputs per step. This can result in up to 1,000,000+ operations per step completion for very large ensembles.
 
 ### 🔍 Secondary Issues
-1. **Nested Loop Complexity**: `GetNextSteps` has O(U × S × I) complexity
+1. **O(N) Tensor Data Iteration**: `UpdateEnsembleState` iterates through ALL tensor data entries
 2. **Lock Contention**: Single mutex serializes all ensemble state updates
 3. **Memory Allocation**: New tensor objects allocated for every output
 
 ### 📈 Performance Impact
 For an ensemble with 100 inputs, 50 steps, and 10 inputs per step:
+- `GetNextSteps`: Up to 50,000 operations per step completion (PRIMARY BOTTLENECK)
 - `UpdateEnsembleState`: 100 iterations per step completion
-- `GetNextSteps`: Up to 50,000 operations per step completion
 - **Total**: Significant CPU overhead growing quadratically with input count
 
 ## Research Methodology
