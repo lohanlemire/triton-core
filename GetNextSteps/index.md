@@ -48,6 +48,14 @@ This folder contains comprehensive analysis and documentation for the `GetNextSt
    - Scalability analysis
    - Real-world performance impact
 
+6. **[sequential_ensemble_optimizations.md](sequential_ensemble_optimizations.md)** - Bespoke optimizations for sequential ensembles
+   - Sequential pattern detection and analysis
+   - Sequential-specific algorithms (O(1) complexity)
+   - Pipeline memory management
+   - Sequential step caching
+   - Tensor reuse optimization
+   - Real-world impact for preprocessing → inference pipelines
+
 ## Key Findings
 
 ### Critical Performance Issue
