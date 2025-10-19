@@ -1,6 +1,6 @@
 # Ignore local build directories and other large or sensitive files from the Docker build context
 build
-**/build
+**/build*
 core/build
 triton-server/build
 triton-python_backend/build
@@ -19,6 +19,7 @@ __pycache__
 *.bak
 *.log
 *.tmp
+.cache/
 
 # Node, Python caches, and other generated files
 node_modules

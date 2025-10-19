@@ -1,29 +1,28 @@
-ARG BASE_IMAGE=nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
-ARG DCGM_VERSION=4.4.1-2
-FROM ${BASE_IMAGE} AS builder
+FROM nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04 AS builder
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG TRITON_BUILD_TYPE=Release
-ARG TRITON_INSTALL_PREFIX=/workspace/build/triton-core/install
-ARG TRITON_CORE_HEADERS_ONLY=OFF
+ENV DCGM_VERSION=4.4.1-2
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TRITON_BUILD_TYPE=Release
+ENV TRITON_INSTALL_PREFIX=/workspace/build/triton-core/install
+ENV TRITON_CORE_HEADERS_ONLY=OFF
 # Enable all optional features for maximum capability
-ARG TRITON_ENABLE_GPU=ON
-ARG TRITON_ENABLE_NVTX=ON
-ARG TRITON_ENABLE_TRACING=ON
-ARG TRITON_ENABLE_LOGGING=ON
-ARG TRITON_ENABLE_STATS=ON
-ARG TRITON_ENABLE_METRICS=ON
-ARG TRITON_ENABLE_METRICS_GPU=ON
-ARG TRITON_ENABLE_METRICS_CPU=ON
-ARG TRITON_ENABLE_GCS=ON
-ARG TRITON_ENABLE_S3=ON
-ARG TRITON_ENABLE_AZURE_STORAGE=ON
-ARG TRITON_ENABLE_ENSEMBLE=ON
-ARG TRITON_ENABLE_MALI_GPU=ON
-ARG TRITON_MIN_CXX_STANDARD=17
-ARG TRITON_THIRD_PARTY_INSTALL_PREFIX=/workspace/third-party
-ARG BUILD_CMAKE_FLAGS=""
-ARG TRITON_ENABLE_TWO_STEP_PIPELINE_FASTPATH=ON
+ENV TRITON_ENABLE_GPU=ON
+ENV TRITON_ENABLE_NVTX=ON
+ENV TRITON_ENABLE_TRACING=ON
+ENV TRITON_ENABLE_LOGGING=ON
+ENV TRITON_ENABLE_STATS=ON
+ENV TRITON_ENABLE_METRICS=ON
+ENV TRITON_ENABLE_METRICS_GPU=ON
+ENV TRITON_ENABLE_METRICS_CPU=ON
+ENV TRITON_ENABLE_GCS=ON
+ENV TRITON_ENABLE_S3=ON
+ENV TRITON_ENABLE_AZURE_STORAGE=ON
+ENV TRITON_ENABLE_ENSEMBLE=ON
+ENV TRITON_ENABLE_MALI_GPU=ON
+ENV TRITON_MIN_CXX_STANDARD=17
+ENV TRITON_THIRD_PARTY_INSTALL_PREFIX=/workspace/third-party
+ENV BUILD_CMAKE_FLAGS=""
+ENV TRITON_ENABLE_TWO_STEP_PIPELINE_FASTPATH=ON
 
 # Install base packages and Kitware apt for newer CMake
 RUN apt-get update \
@@ -74,8 +73,8 @@ RUN apt-get update \
 
 # Create an isolated Python virtualenv and install the build tools there.
 RUN python3 -m venv /opt/pybuild \
- && /opt/pybuild/bin/python -m pip install --upgrade pip setuptools wheel build \
- && /opt/pybuild/bin/python -m pip install docker virtualenv
+  && /opt/pybuild/bin/python -m pip install --upgrade pip setuptools wheel build \
+  && /opt/pybuild/bin/python -m pip install docker virtualenv
 
 # Put the venv bin on PATH for the remaining build steps
 ENV PATH=/opt/pybuild/bin:$PATH
@@ -91,9 +90,9 @@ ENV DCGM_VERSION=4.4.0-1
 # Try to install DCGM packages. If exact version isn't available fall back.
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends \
-     datacenter-gpu-manager-4-core=1:${DCGM_VERSION} \
-     datacenter-gpu-manager-4-dev=1:${DCGM_VERSION} || \
-    (apt-get install --yes --no-install-recommends datacenter-gpu-manager-4-core datacenter-gpu-manager-4-dev || true) \
+  datacenter-gpu-manager-4-core=1:${DCGM_VERSION} \
+  datacenter-gpu-manager-4-dev=1:${DCGM_VERSION} || \
+  (apt-get install --yes --no-install-recommends datacenter-gpu-manager-4-core datacenter-gpu-manager-4-dev || true) \
   && rm -rf /var/lib/apt/lists/*
 
 # Set DCGM_DIR to help CMake find the DCGM package
@@ -111,47 +110,45 @@ ENV CMAKE_POLICY_VERSION_MINIMUM=3.5
 # Create a persistent build directory for caching CMake files
 RUN mkdir -p /workspace/build-cache
 
+RUN ls -la /workspace/core/python/
+
 # Configure core only (ExternalProject will handle third-party fetch/build)
 # Use maximum optimization flags for Release build (LTO)
 RUN --mount=type=cache,id=cmake-build-cache,target=/workspace/build-cache \
-    cmake -S core -B /workspace/build-cache -G Ninja \
-    -DCMAKE_BUILD_TYPE=${TRITON_BUILD_TYPE} \
-    -DCMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE:BOOL=TRUE \
-    -DCMAKE_INSTALL_PREFIX=${TRITON_INSTALL_PREFIX} \
-    -DTRITON_CORE_HEADERS_ONLY=${TRITON_CORE_HEADERS_ONLY} \
-    -DTRITON_ENABLE_GPU=${TRITON_ENABLE_GPU} \
-    -DTRITON_ENABLE_NVTX=${TRITON_ENABLE_NVTX} \
-    -DTRITON_ENABLE_TRACING=${TRITON_ENABLE_TRACING} \
-    -DTRITON_ENABLE_LOGGING=${TRITON_ENABLE_LOGGING} \
-    -DTRITON_ENABLE_STATS=${TRITON_ENABLE_STATS} \
-    -DTRITON_ENABLE_METRICS=${TRITON_ENABLE_METRICS} \
-    -DTRITON_ENABLE_METRICS_GPU=${TRITON_ENABLE_METRICS_GPU} \
-    -DTRITON_ENABLE_METRICS_CPU=${TRITON_ENABLE_METRICS_CPU} \
-    -DTRITON_ENABLE_GCS=${TRITON_ENABLE_GCS} \
-    -DTRITON_ENABLE_S3=${TRITON_ENABLE_S3} \
-    -DTRITON_ENABLE_AZURE_STORAGE=${TRITON_ENABLE_AZURE_STORAGE} \
-    -DTRITON_ENABLE_ENSEMBLE=${TRITON_ENABLE_ENSEMBLE} \
-    -DTRITON_ENABLE_MALI_GPU=${TRITON_ENABLE_MALI_GPU} \
-    -DTRITON_MIN_CXX_STANDARD=${TRITON_MIN_CXX_STANDARD} \
-    -DTRITON_THIRD_PARTY_INSTALL_PREFIX=${TRITON_THIRD_PARTY_INSTALL_PREFIX} \
-    -DTRITON_ENABLE_TWO_STEP_PIPELINE_FASTPATH=${TRITON_ENABLE_TWO_STEP_PIPELINE_FASTPATH} \
-    -DCMAKE_POLICY_VERSION_MINIMUM=${CMAKE_POLICY_VERSION_MINIMUM} \
-    ${BUILD_CMAKE_FLAGS}
+  cmake -S core -B /workspace/build-cache -G Ninja \
+  -DCMAKE_BUILD_TYPE=${TRITON_BUILD_TYPE} \
+  -DCMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE:BOOL=TRUE \
+  -DCMAKE_INSTALL_PREFIX=${TRITON_INSTALL_PREFIX} \
+  -DTRITON_CORE_HEADERS_ONLY=${TRITON_CORE_HEADERS_ONLY} \
+  -DTRITON_ENABLE_GPU=${TRITON_ENABLE_GPU} \
+  -DTRITON_ENABLE_NVTX=${TRITON_ENABLE_NVTX} \
+  -DTRITON_ENABLE_TRACING=${TRITON_ENABLE_TRACING} \
+  -DTRITON_ENABLE_LOGGING=${TRITON_ENABLE_LOGGING} \
+  -DTRITON_ENABLE_STATS=${TRITON_ENABLE_STATS} \
+  -DTRITON_ENABLE_METRICS=${TRITON_ENABLE_METRICS} \
+  -DTRITON_ENABLE_METRICS_GPU=${TRITON_ENABLE_METRICS_GPU} \
+  -DTRITON_ENABLE_METRICS_CPU=${TRITON_ENABLE_METRICS_CPU} \
+  -DTRITON_ENABLE_GCS=${TRITON_ENABLE_GCS} \
+  -DTRITON_ENABLE_S3=${TRITON_ENABLE_S3} \
+  -DTRITON_ENABLE_AZURE_STORAGE=${TRITON_ENABLE_AZURE_STORAGE} \
+  -DTRITON_ENABLE_ENSEMBLE=${TRITON_ENABLE_ENSEMBLE} \
+  -DTRITON_ENABLE_MALI_GPU=${TRITON_ENABLE_MALI_GPU} \
+  -DTRITON_MIN_CXX_STANDARD=${TRITON_MIN_CXX_STANDARD} \
+  -DTRITON_THIRD_PARTY_INSTALL_PREFIX=${TRITON_THIRD_PARTY_INSTALL_PREFIX} \
+  -DTRITON_ENABLE_TWO_STEP_PIPELINE_FASTPATH=${TRITON_ENABLE_TWO_STEP_PIPELINE_FASTPATH} \
+  -DCMAKE_POLICY_VERSION_MINIMUM=${CMAKE_POLICY_VERSION_MINIMUM} \
+  ${BUILD_CMAKE_FLAGS}
 
 # Build and install using the persistent build directory and cache mount
 RUN --mount=type=cache,id=cmake-build-cache,target=/workspace/build-cache \
-  cmake --build /workspace/build-cache --config ${TRITON_BUILD_TYPE} -j$(nproc)
+  cmake --build /workspace/build-cache --config ${TRITON_BUILD_TYPE} -j$(nproc) --verbose
 
 RUN --mount=type=cache,id=cmake-build-cache,target=/workspace/build-cache \
-  cmake --install /workspace/build-cache --config ${TRITON_BUILD_TYPE}
+  cmake --install /workspace/build-cache --config ${TRITON_BUILD_TYPE} --verbose
 
-# Also declare the build-cache as a VOLUME for non-BuildKit users who prefer
-# to bind-mount a host directory at `/workspace/build-cache` during iterative
-# development (optional).
-VOLUME /workspace/build-cache
 
 # Final runtime image: copy installed artifacts
-FROM ${BASE_IMAGE} AS runtime
+FROM nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04 AS runtime
 LABEL maintainer="triton-core-builder-release"
 
 COPY --from=builder /workspace/build/triton-core/install /opt/tritonserver
