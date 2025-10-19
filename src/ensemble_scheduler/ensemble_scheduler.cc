@@ -28,6 +28,7 @@
 
 #include "ensemble_scheduler.h"
 
+#include <algorithm>
 #include <mutex>
 
 #include "cuda_utils.h"
@@ -921,6 +922,130 @@ EnsembleContext::GetNextSteps(
 {
   steps->clear();
 
+#ifdef TRITON_ENABLE_TWO_STEP_PIPELINE_FASTPATH
+  // Ultra-fast path for a strictly two-step pipeline where the output of the
+  // first step feeds the second step. Assumptions:
+  // - info_->steps_.size() == 2
+  // - Each ensemble tensor is consumed by at most one step
+  // - Step 0 consumes ensemble inputs, Step 1 consumes outputs of Step 0
+  // - A step is ready for an iteration when all its inputs have that iteration
+  if ((info_ != nullptr) && (info_->steps_.size() == 2)) {
+    if (updated_tensors.empty()) {
+      return Status::Success;
+    }
+
+    // Track scheduled pairs to avoid duplicate scheduling when multiple updated
+    // tensors map to the same (step, iteration).
+    std::vector<std::pair<size_t, IterationCount>> scheduled;
+    scheduled.reserve(updated_tensors.size());
+
+    for (const auto& ut : updated_tensors) {
+      const auto& consumers = (*tensor_to_step_)[ut.first];
+      if (consumers.empty()) {
+        continue;
+      }
+      size_t step_idx = *consumers.begin();
+      const auto iter = ut.second;
+
+      // Dedup: skip if we already scheduled this (step, iter)
+      if (std::find(scheduled.begin(), scheduled.end(),
+                    std::make_pair(step_idx, iter)) != scheduled.end()) {
+        continue;
+      }
+
+      // Readiness: all inputs for this step must have data for 'iter'
+      bool ready = true;
+      const auto& sinfo = info_->steps_[step_idx];
+      for (const auto& in_pair : sinfo.input_to_tensor_) {
+        auto td_it = tensor_data_.find(in_pair.second);
+        if (td_it == tensor_data_.end() ||
+            td_it->second.tensor_.find(iter) == td_it->second.tensor_.end()) {
+          ready = false;
+          break;
+        }
+      }
+      if (!ready) {
+        continue;
+      }
+
+      steps->emplace_back();
+      RETURN_IF_ERROR(InitStep(step_idx, iter, &(steps->back())));
+      scheduled.emplace_back(step_idx, iter);
+    }
+
+    inflight_step_counter_ += steps->size();
+    return Status::Success;
+  }
+#endif  // TRITON_ENABLE_TWO_STEP_PIPELINE_FASTPATH
+
+#ifdef TRITON_ENABLE_SEQUENTIAL_ENSEMBLE_FASTPATH
+  if (updated_tensors.empty()) {
+    return Status::Success;
+  }
+
+  // Fast path: each tensor feeds at most one downstream step and execution is
+  // strictly sequential.
+  std::unordered_map<size_t, std::vector<IterationCount>> ready_by_step;
+  ready_by_step.reserve(updated_tensors.size());
+
+  for (const auto& tensor_update : updated_tensors) {
+    const auto& step_set = (*tensor_to_step_)[tensor_update.first];
+    if (step_set.empty()) {
+      continue;
+    }
+
+    // Under the sequential contract each tensor is consumed by a single step.
+    size_t consumer_idx = *step_set.begin();
+    auto& iterations = ready_by_step[consumer_idx];
+    const auto iteration = tensor_update.second;
+    if (std::find(iterations.begin(), iterations.end(), iteration) ==
+        iterations.end()) {
+      iterations.push_back(iteration);
+    }
+  }
+
+  if (ready_by_step.empty()) {
+    return Status::Success;
+  }
+
+  std::vector<size_t> step_indices;
+  step_indices.reserve(ready_by_step.size());
+  for (const auto& entry : ready_by_step) {
+    step_indices.push_back(entry.first);
+  }
+  std::sort(step_indices.begin(), step_indices.end());
+
+  for (const auto step_idx : step_indices) {
+    auto& iterations = ready_by_step[step_idx];
+    std::sort(iterations.begin(), iterations.end());
+    const auto& step_info = info_->steps_[step_idx];
+
+    for (const auto iteration : iterations) {
+      bool ready = true;
+      for (const auto& input_pair : step_info.input_to_tensor_) {
+        auto tensor_it = tensor_data_.find(input_pair.second);
+        if (tensor_it == tensor_data_.end()) {
+          ready = false;
+          break;
+        }
+        const auto& tensor_map = tensor_it->second.tensor_;
+        if (tensor_map.find(iteration) == tensor_map.end()) {
+          ready = false;
+          break;
+        }
+      }
+      if (!ready) {
+        continue;
+      }
+      steps->emplace_back();
+      RETURN_IF_ERROR(InitStep(step_idx, iteration, &(steps->back())));
+    }
+  }
+
+  inflight_step_counter_ += steps->size();
+
+  return Status::Success;
+#else
   std::set<std::pair<size_t, IterationCount>> next_step_idx;
   // Get steps whose tensors used for input are set
   for (const auto& updated_tensor : updated_tensors) {
@@ -954,6 +1079,7 @@ EnsembleContext::GetNextSteps(
   inflight_step_counter_ += steps->size();
 
   return Status::Success;
+#endif  // TRITON_ENABLE_SEQUENTIAL_ENSEMBLE_FASTPATH
 }
 
 Status

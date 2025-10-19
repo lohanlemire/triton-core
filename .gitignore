@@ -1,7 +1,8 @@
+/build-*
 /build
 /.vscode
 *.so
 *__pycache__/
 build.log
-user_ensemble_structure.md
 .cache/
+EnsembleContext::Proceed research/user_ensemble_structure.md

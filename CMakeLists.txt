@@ -171,6 +171,12 @@ if(NOT TRITON_CORE_HEADERS_ONLY)
   # Ensemble
   option(TRITON_ENABLE_ENSEMBLE "Include ensemble support in server" OFF)
 
+  # Two-step ensemble fastpath (special-case optimization for 2-step
+  # sequential ensembles). Enabled by default to optimize for the common
+  # preprocessor->model pipeline. Can be disabled if needed.
+  option(TRITON_ENABLE_TWO_STEP_PIPELINE_FASTPATH "Enable two-step ensemble fastpath" ON)
+  message(STATUS "TRITON_ENABLE_TWO_STEP_PIPELINE_FASTPATH root=${TRITON_ENABLE_TWO_STEP_PIPELINE_FASTPATH}")
+
   # Metrics
   option(TRITON_ENABLE_METRICS "Include metrics support in server" ON)
   option(TRITON_ENABLE_METRICS_GPU "Include GPU metrics support in server" ON)
@@ -351,6 +357,7 @@ if(NOT TRITON_CORE_HEADERS_ONLY)
       -DTRITON_ENABLE_AZURE_STORAGE:BOOL=${TRITON_ENABLE_AZURE_STORAGE}
       -DTRITON_ENABLE_S3:BOOL=${TRITON_ENABLE_S3}
       -DTRITON_ENABLE_ENSEMBLE:BOOL=${TRITON_ENABLE_ENSEMBLE}
+      -DTRITON_ENABLE_TWO_STEP_PIPELINE_FASTPATH:BOOL=${TRITON_ENABLE_TWO_STEP_PIPELINE_FASTPATH}
       -DTRITON_MIN_CXX_STANDARD:STRING=${TRITON_MIN_CXX_STANDARD}
       -DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}
       -DCMAKE_INSTALL_PREFIX:PATH=${TRITON_INSTALL_PREFIX}
