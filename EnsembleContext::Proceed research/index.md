@@ -1,7 +1,5 @@
 # EnsembleContext::Proceed Research Index
 
-**[Readme.md](README.md)**
-
 ## Overview
 
 This research analyzes the `EnsembleContext::Proceed` function and its related components in the Triton Inference Server ensemble scheduler, with a focus on understanding data structures, scaling issues, and optimization opportunities.

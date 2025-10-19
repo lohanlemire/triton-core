@@ -3,3 +3,5 @@
 *.so
 *__pycache__/
 build.log
+user_ensemble_structure.md
+.cache/
