@@ -33,6 +33,10 @@ project(tritoncore LANGUAGES C CXX)
 # TRITON_CORE_HEADERS_ONLY=OFF to also build libtritonserver.so.
 option(TRITON_CORE_HEADERS_ONLY "Build only headers and stub" ON)
 
+# Enable interprocedural optimization (IPO/LTO) for Release builds.
+# This can significantly reduce binary size and improve performance.
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE CACHE BOOL "Enable IPO for Release" FORCE)
+
 #
 # Specifying min required C++ standard
 #
@@ -306,6 +310,7 @@ if(NOT TRITON_CORE_HEADERS_ONLY)
     SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src"
     BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/triton-core"
     CMAKE_CACHE_ARGS
+      -DCMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE:BOOL=${CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE}
       -DProtobuf_DIR:PATH=${_FINDPACKAGE_PROTOBUF_CONFIG_DIR}
       ${_CMAKE_ARGS_OPENSSL_ROOT_DIR}
       ${_CMAKE_ARGS_CMAKE_TOOLCHAIN_FILE}
